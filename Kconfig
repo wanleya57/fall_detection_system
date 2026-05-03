@@ -1,0 +1,96 @@
+# RT-Thread Smart 跌倒检测系统 Kconfig
+
+config FALL_DETECTION
+    bool "Fall Detection System"
+    default y
+
+if FALL_DETECTION
+
+config FALL_VERSION
+    string "Version"
+    default "1.0.0"
+
+# 视频参数
+config FALL_VIDEO_WIDTH
+    int "Video Width"
+    default 720
+
+config FALL_VIDEO_HEIGHT
+    int "Video Height"
+    default 480
+
+config FALL_VIDEO_FPS
+    int "Video FPS"
+    default 30
+
+# AI 参数
+config FALL_CONFIDENCE_THRESHOLD
+    int "Confidence Threshold (x100)"
+    default 60
+    help
+        跌倒检测置信度阈值，60 表示 0.60
+
+config FALL_CONFIRM_FRAMES
+    int "Confirm Frames"
+    default 5
+    help
+        连续确认帧数
+
+config FALL_ANGLE_THRESHOLD
+    int "Angle Threshold (degrees)"
+    default 45
+    help
+        身体倾斜角度阈值
+
+config FALL_COOLDOWN_MS
+    int "Alert Cooldown (ms)"
+    default 10000
+    help
+        告警冷却时间
+
+# 告警配置
+config FALL_ALERT_ENABLED
+    bool "Enable Alert"
+    default y
+
+config FALL_BUZZER_ENABLED
+    bool "Enable Buzzer"
+    default y
+
+# 网络配置
+config FALL_WIFI_ENABLED
+    bool "Enable WiFi"
+    default y
+
+config FALL_MQTT_ENABLED
+    bool "Enable MQTT Notification"
+    default y
+
+config FALL_RTSP_ENABLED
+    bool "Enable RTSP Server"
+    default n
+
+# 录制配置
+config FALL_RECORDING_ENABLED
+    bool "Enable Recording"
+    default y
+
+config FALL_RECORD_MAX_SECONDS
+    int "Max Recording Duration (s)"
+    default 30
+
+# 日志配置
+config FALL_LOG_LEVEL
+    int "Log Level (0=Error, 3=Debug)"
+    default 2
+
+# 模型配置
+config FALL_MODEL_DETECT
+    string "Detection Model Path"
+    default "/sdcard/model/yolov5n_k230.kmodel"
+
+config FALL_MODEL_POSE
+    string "Pose Model Path"
+    default "/sdcard/model/pose_k230.kmodel"
+
+endif # FALL_DETECTION

@@ -1,0 +1,43 @@
+# 编译产物
+*.o
+*.d
+*.elf
+*.bin
+*.hex
+*.map
+fall_detection
+fall_detection_pc
+
+# 模型权重
+*.pt
+*.kmodel
+*.onnx
+
+# 图片/快照
+*.jpg
+*.jpeg
+*.png
+
+# 数据文件
+pc_sim/data/
+camera_cache.txt
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 临时文件
+*.tmp
+*.log
+*.bak
+
+# SD 卡 (开发环境)
+/sdcard/

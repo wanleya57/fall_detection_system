@@ -1,0 +1,19 @@
+{
+  "video_width": 720,
+  "video_height": 480,
+  "video_fps": 30,
+  "confidence_threshold": 0.6,
+  "confirm_frames": 5,
+  "angle_threshold": 45.0,
+  "velocity_threshold": 0.3,
+  "cooldown_ms": 10000,
+  "alert_enabled": 1,
+  "buzzer_enabled": 1,
+  "notification_enabled": 1,
+  "recording_enabled": 1,
+  "wifi_ssid": "K230_AP",
+  "wifi_password": "12345678",
+  "mqtt_broker": "192.168.1.100",
+  "mqtt_port": 1883,
+  "mqtt_topic": "fall_detection/events"
+}

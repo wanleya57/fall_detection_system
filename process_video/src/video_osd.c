@@ -1,0 +1,230 @@
+/**
+ * video_osd.c - OSD 叠加渲染实现
+ *
+ * 帧缓冲为 YUV420 格式，OSD 绘制在 Y (亮度) 平面上
+ * Y 平面大小: VIDEO_WIDTH * VIDEO_HEIGHT 字节
+ */
+#include "video_osd.h"
+#include "log.h"
+#include <string.h>
+
+/* 最大 OSD 区域数 */
+#define MAX_OSD_REGIONS  4
+/* Y 平面大小 */
+#define Y_PLANE_SIZE     (VIDEO_WIDTH * VIDEO_HEIGHT)
+
+typedef struct {
+    int   x, y;
+    int   width, height;
+    uint8_t show;
+    char  text[64];
+    uint32_t color;
+    uint32_t duration_ms;
+    uint64_t start_tick;
+} osd_region_t;
+
+static osd_region_t g_osd_regions[MAX_OSD_REGIONS];
+static uint8_t g_osd_initialized = 0;
+
+/* 简易 5x7 字体 (ASCII 32~90) */
+static const uint8_t font_5x7[][7] = {
+    /* 空格 */ {0x00,0x00,0x00,0x00,0x00,0x00,0x00},
+    /* ! */    {0x04,0x04,0x04,0x04,0x00,0x04,0x00},
+    /* " */    {0x0A,0x0A,0x00,0x00,0x00,0x00,0x00},
+    /* # */    {0x0A,0x1F,0x0A,0x0A,0x1F,0x0A,0x00},
+    /* $ */    {0x04,0x1E,0x05,0x0E,0x14,0x0F,0x00},
+    /* % */    {0x03,0x13,0x08,0x04,0x1A,0x19,0x00},
+    /* & */    {0x06,0x09,0x05,0x02,0x15,0x09,0x06},
+    /* ' */    {0x04,0x04,0x02,0x00,0x00,0x00,0x00},
+    /* ( */    {0x08,0x04,0x02,0x02,0x02,0x04,0x08},
+    /* ) */    {0x02,0x04,0x08,0x08,0x08,0x04,0x02},
+    /* * */    {0x00,0x04,0x15,0x0E,0x15,0x04,0x00},
+    /* + */    {0x00,0x04,0x04,0x1F,0x04,0x04,0x00},
+    /* , */    {0x00,0x00,0x00,0x00,0x00,0x04,0x02},
+    /* - */    {0x00,0x00,0x00,0x1F,0x00,0x00,0x00},
+    /* . */    {0x00,0x00,0x00,0x00,0x00,0x04,0x00},
+    /* / */    {0x00,0x10,0x08,0x04,0x02,0x01,0x00},
+    /* 0 */    {0x0E,0x11,0x19,0x15,0x13,0x11,0x0E},
+    /* 1 */    {0x04,0x06,0x04,0x04,0x04,0x04,0x0E},
+    /* 2 */    {0x0E,0x11,0x10,0x08,0x04,0x02,0x1F},
+    /* 3 */    {0x0E,0x11,0x10,0x0C,0x10,0x11,0x0E},
+    /* 4 */    {0x08,0x0C,0x0A,0x09,0x1F,0x08,0x08},
+    /* 5 */    {0x1F,0x01,0x0F,0x10,0x10,0x11,0x0E},
+    /* 6 */    {0x0C,0x02,0x01,0x0F,0x11,0x11,0x0E},
+    /* 7 */    {0x1F,0x10,0x08,0x04,0x02,0x02,0x02},
+    /* 8 */    {0x0E,0x11,0x11,0x0E,0x11,0x11,0x0E},
+    /* 9 */    {0x0E,0x11,0x11,0x1E,0x10,0x08,0x06},
+    /* : */    {0x00,0x04,0x00,0x00,0x00,0x04,0x00},
+    /* ; */    {0x00,0x04,0x00,0x00,0x00,0x04,0x02},
+    /* < */    {0x08,0x04,0x02,0x01,0x02,0x04,0x08},
+    /* = */    {0x00,0x00,0x1F,0x00,0x1F,0x00,0x00},
+    /* > */    {0x02,0x04,0x08,0x10,0x08,0x04,0x02},
+    /* ? */    {0x0E,0x11,0x10,0x08,0x04,0x00,0x04},
+    /* @ */    {0x0E,0x11,0x15,0x1D,0x01,0x01,0x1E},
+    /* A */    {0x0E,0x11,0x11,0x11,0x1F,0x11,0x11},
+    /* B */    {0x0F,0x11,0x11,0x0F,0x11,0x11,0x0F},
+    /* C */    {0x0E,0x11,0x01,0x01,0x01,0x11,0x0E},
+    /* D */    {0x07,0x09,0x11,0x11,0x11,0x09,0x07},
+    /* E */    {0x1F,0x01,0x01,0x0F,0x01,0x01,0x1F},
+    /* F */    {0x1F,0x01,0x01,0x0F,0x01,0x01,0x01},
+    /* G */    {0x0E,0x11,0x01,0x1D,0x11,0x11,0x1E},
+    /* H */    {0x11,0x11,0x11,0x1F,0x11,0x11,0x11},
+    /* I */    {0x0E,0x04,0x04,0x04,0x04,0x04,0x0E},
+    /* J */    {0x1C,0x08,0x08,0x08,0x08,0x09,0x06},
+    /* K */    {0x11,0x09,0x05,0x03,0x05,0x09,0x11},
+    /* L */    {0x01,0x01,0x01,0x01,0x01,0x01,0x1F},
+    /* M */    {0x11,0x1B,0x15,0x15,0x11,0x11,0x11},
+    /* N */    {0x11,0x11,0x13,0x15,0x19,0x11,0x11},
+    /* O */    {0x0E,0x11,0x11,0x11,0x11,0x11,0x0E},
+    /* P */    {0x0F,0x11,0x11,0x0F,0x01,0x01,0x01},
+    /* Q */    {0x0E,0x11,0x11,0x11,0x15,0x09,0x16},
+    /* R */    {0x0F,0x11,0x11,0x0F,0x05,0x09,0x11},
+    /* S */    {0x0E,0x11,0x01,0x0E,0x10,0x11,0x0E},
+    /* T */    {0x1F,0x04,0x04,0x04,0x04,0x04,0x04},
+    /* U */    {0x11,0x11,0x11,0x11,0x11,0x11,0x0E},
+    /* V */    {0x11,0x11,0x11,0x11,0x0A,0x0A,0x04},
+    /* W */    {0x11,0x11,0x11,0x15,0x15,0x1B,0x11},
+    /* X */    {0x11,0x11,0x0A,0x04,0x0A,0x11,0x11},
+    /* Y */    {0x11,0x11,0x0A,0x04,0x04,0x04,0x04},
+    /* Z */    {0x1F,0x10,0x08,0x04,0x02,0x01,0x1F},
+};
+
+/*
+ * 在 YUV420 的 Y 平面上绘制单个字符
+ * Y 平面布局: 每行 VIDEO_WIDTH 字节, 共 VIDEO_HEIGHT 行
+ * val: 亮度值 (0~255), 推荐用 255(白) 或 0(黑) 做对比
+ */
+static void draw_char_y(uint8_t *y_plane, int buf_w, int buf_h,
+                         int cx, int cy, char ch, uint8_t val, int scale)
+{
+    if (ch < ' ' || ch > 'Z') return;
+    int idx = ch - ' ';
+    if (idx >= (int)(sizeof(font_5x7) / sizeof(font_5x7[0]))) return;
+
+    for (int row = 0; row < 7; row++) {
+        uint8_t bits = font_5x7[idx][row];
+        for (int col = 0; col < 5; col++) {
+            if (bits & (0x10 >> col)) {
+                for (int sy = 0; sy < scale; sy++) {
+                    for (int sx = 0; sx < scale; sx++) {
+                        int px = cx + col * scale + sx;
+                        int py = cy + row * scale + sy;
+                        if (px >= 0 && px < buf_w && py >= 0 && py < buf_h) {
+                            y_plane[py * buf_w + px] = val;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/* 在 Y 平面上绘制文字 */
+static void draw_text_y(uint8_t *y_plane, int buf_w, int buf_h,
+                         int x, int y, const char *text, uint8_t val, int scale)
+{
+    int cx = x;
+    for (int i = 0; text[i] != '\0'; i++) {
+        draw_char_y(y_plane, buf_w, buf_h, cx, y, text[i], val, scale);
+        cx += 6 * scale;
+    }
+}
+
+/* 在 Y 平面上绘制矩形填充 */
+static void draw_rect_y(uint8_t *y_plane, int buf_w, int buf_h,
+                         int x, int y, int w, int h, uint8_t val)
+{
+    for (int row = y; row < y + h && row < buf_h; row++) {
+        for (int col = x; col < x + w && col < buf_w; col++) {
+            if (row >= 0 && col >= 0) {
+                y_plane[row * buf_w + col] = val;
+            }
+        }
+    }
+}
+
+/* 从 RGB 颜色提取亮度分量 (用于 OSD 显示) */
+static uint8_t color_to_luma(uint32_t color)
+{
+    uint8_t r = (color >> 16) & 0xFF;
+    uint8_t g = (color >> 8) & 0xFF;
+    uint8_t b = color & 0xFF;
+    /* ITU-R BT.601 */
+    return (uint8_t)((r * 299 + g * 587 + b * 114) / 1000);
+}
+
+fall_err_t video_osd_init(void)
+{
+    rt_memset(g_osd_regions, 0, sizeof(g_osd_regions));
+    g_osd_initialized = 1;
+    LOG_I(LOG_TAG_VIDEO, "OSD initialized");
+    return FALL_OK;
+}
+
+void video_osd_process_cmd(osd_cmd_t *cmd)
+{
+    if (cmd == RT_NULL || !g_osd_initialized) return;
+
+    /* 找到可用区域或复用 */
+    for (int i = 0; i < MAX_OSD_REGIONS; i++) {
+        if (!g_osd_regions[i].show || i == 0) {
+            g_osd_regions[i].x = cmd->x;
+            g_osd_regions[i].y = cmd->y;
+            g_osd_regions[i].width = cmd->width;
+            g_osd_regions[i].height = cmd->height;
+            g_osd_regions[i].show = cmd->show_flag;
+            rt_strncpy(g_osd_regions[i].text, cmd->text, sizeof(g_osd_regions[i].text));
+            g_osd_regions[i].color = cmd->color;
+            g_osd_regions[i].duration_ms = cmd->duration_ms;
+            g_osd_regions[i].start_tick = rt_tick_get();
+            break;
+        }
+    }
+}
+
+void video_osd_render(uint8_t *frame)
+{
+    if (!g_osd_initialized || frame == RT_NULL) return;
+
+    /* OSD 绘制在 Y 平面上 (YUV420 的前 VIDEO_WIDTH*VIDEO_HEIGHT 字节) */
+    uint8_t *y_plane = frame;
+    uint64_t now = rt_tick_get();
+
+    for (int i = 0; i < MAX_OSD_REGIONS; i++) {
+        if (!g_osd_regions[i].show) continue;
+
+        /* 检查超时 */
+        if (g_osd_regions[i].duration_ms > 0) {
+            uint64_t elapsed = (now - g_osd_regions[i].start_tick) * 1000 / RT_TICK_PER_SECOND;
+            if (elapsed > g_osd_regions[i].duration_ms) {
+                g_osd_regions[i].show = 0;
+                continue;
+            }
+        }
+
+        uint8_t luma = color_to_luma(g_osd_regions[i].color);
+        int text_len = rt_strlen(g_osd_regions[i].text);
+
+        /* 绘制半透明背景 (黑色) */
+        draw_rect_y(y_plane, VIDEO_WIDTH, VIDEO_HEIGHT,
+                    g_osd_regions[i].x - 4, g_osd_regions[i].y - 2,
+                    text_len * 6 * 2 + 8, 18, 0);
+
+        /* 绘制文字 (用目标亮度) */
+        draw_text_y(y_plane, VIDEO_WIDTH, VIDEO_HEIGHT,
+                    g_osd_regions[i].x, g_osd_regions[i].y,
+                    g_osd_regions[i].text, luma, 2);
+    }
+}
+
+void video_osd_clear_all(void)
+{
+    rt_memset(g_osd_regions, 0, sizeof(g_osd_regions));
+}
+
+void video_osd_deinit(void)
+{
+    video_osd_clear_all();
+    g_osd_initialized = 0;
+    LOG_I(LOG_TAG_VIDEO, "OSD deinitialized");
+}
